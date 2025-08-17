@@ -1,38 +1,37 @@
-import * as core from '@actions/core';
 import * as fs from 'fs';
 import { login } from './api/login';
 import { uploadResume } from './api/uploadResume';
 
+interface RunConfig {
+  username: string;
+  password: string;
+  profileId: string;
+  /**
+   * One or more resume paths. Multiple paths can be separated by newlines.
+   */
+  resumePath: string;
+}
+
 /**
- * The main function for the action.
- *
- * @returns Resolves when the action is complete.
+ * Execute the resume upload workflow.
  */
-export async function run(): Promise<void> {
+export async function run({
+  username,
+  password,
+  profileId,
+  resumePath,
+}: RunConfig): Promise<void> {
   try {
-    // Get user inputs
-    const username = core.getInput('username');
-    const password = core.getInput('password');
-    const profileId = core.getInput('profile_id');
-    const resumePathInput = core.getInput('resume_path');
-
-    // Mask sensitive inputs
-    core.setSecret(username);
-    core.setSecret(password);
-    core.setSecret(profileId);
-
-    // Parse resume paths (could be a single path or multiple paths in YAML array format)
+    // Parse resume paths (could be a single path or multiple paths in newline format)
     let resumePaths: string[] = [];
 
-    // If the input contains newlines, it's likely a YAML array
-    if (resumePathInput.includes('\n')) {
-      resumePaths = resumePathInput
+    if (resumePath.includes('\n')) {
+      resumePaths = resumePath
         .split('\n')
         .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith('#')); // Remove empty lines and comments
+        .filter((line) => line && !line.startsWith('#'));
     } else {
-      // Single path
-      resumePaths = [resumePathInput];
+      resumePaths = [resumePath];
     }
 
     if (resumePaths.length === 0) {
@@ -43,7 +42,7 @@ export async function run(): Promise<void> {
     const validResumePaths = resumePaths.filter((path) => {
       const exists = fs.existsSync(path);
       if (!exists) {
-        core.warning(`⚠️ Resume file not found: ${path}`);
+        console.warn(`⚠️ Resume file not found: ${path}`);
       }
       return exists;
     });
@@ -53,26 +52,23 @@ export async function run(): Promise<void> {
     }
 
     // Select resume based on date for deterministic selection
-    // This provides a consistent way to rotate resumes based on the calendar
     const today = new Date();
-    const dayOfMonth = today.getDate(); // 1-31
-    const dayOfWeek = today.getDay(); // 0-6 (Sunday is 0)
-    const month = today.getMonth(); // 0-11
+    const dayOfMonth = today.getDate();
+    const dayOfWeek = today.getDay();
+    const month = today.getMonth();
 
-    // Combine day of month, day of week, and month for better distribution
     const selectionFactor =
       (dayOfMonth + dayOfWeek * 5 + month * 31) % validResumePaths.length;
 
     const selectedResume = validResumePaths[selectionFactor];
 
-    core.info(`📄 Selected resume for upload: ${selectedResume}`);
-    core.info(
+    console.log(`📄 Selected resume for upload: ${selectedResume}`);
+    console.log(
       `📅 Selection based on date: Day ${dayOfMonth}, Weekday ${dayOfWeek}, Month ${month + 1}`
     );
-    core.setOutput('selected_resume 📄', selectedResume);
 
     // Login to Naukri
-    core.info('🔐 Logging in to Naukri.com...');
+    console.log('🔐 Logging in to Naukri.com...');
     const cookies = await login(username, password);
 
     if (!cookies) {
@@ -80,19 +76,23 @@ export async function run(): Promise<void> {
     }
 
     // Upload the resume
-    core.info('⬆️ Uploading resume...');
+    console.log('⬆️ Uploading resume...');
     const success = await uploadResume(cookies, selectedResume, profileId);
 
-    // Set outputs
-    core.setOutput('upload_status 🚀', success ? 'success ✅' : 'failure ❌');
-    core.setOutput('upload_time 🕒', new Date().toISOString());
+    console.log(`upload_status 🚀: ${success ? 'success ✅' : 'failure ❌'}`);
+    console.log(`upload_time 🕒: ${new Date().toISOString()}`);
 
     if (success) {
-      core.info('✅ Resume uploaded successfully!');
+      console.log('✅ Resume uploaded successfully!');
     } else {
-      core.setFailed('❌ Resume upload failed');
+      throw new Error('❌ Resume upload failed');
     }
   } catch (error) {
-    if (error instanceof Error) core.setFailed(`❗ ${error.message}`);
+    if (error instanceof Error) {
+      console.error(`❗ ${error.message}`);
+      throw error;
+    }
+    console.error(error);
+    throw error;
   }
 }
